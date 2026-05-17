@@ -85,14 +85,14 @@ func RunAsyncTCPServer() {
 			} else { // event from the existing connection
 
 				conn := &core.FDCommon{FD: int64(events[i].Fd)}
-				cmd, err := readCommand(conn)
+				cmds, err := readCommand(conn)
 				if err != nil {
 					log.Println("closed connection from FD ", events[i].Fd)
 					syscall.Close(int(events[i].Fd))
 					conClients--
 					continue
 				}
-				respond(cmd, conn)
+				respond(cmds, conn)
 			}
 		}
 	}

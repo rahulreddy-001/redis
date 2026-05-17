@@ -5,15 +5,14 @@ import (
 	"time"
 )
 
-type Object struct {
-	value any
-	ttl   time.Time
-}
-
 var memory map[string]Object
 
 func init() {
 	memory = map[string]Object{}
+}
+
+func setObj(key string, o Object) {
+	memory[key] = o
 }
 
 func set(key string, value any, ttl time.Duration, override bool) []byte {
@@ -24,9 +23,11 @@ func set(key string, value any, ttl time.Duration, override bool) []byte {
 	if val, ok := memory[key]; ok && !override {
 		val.value = val
 	} else {
+		oType, oEnc := getTypeEnc(value)
 		memory[key] = Object{
-			value: value,
-			ttl:   ttlTime,
+			value:        value,
+			ttl:          ttlTime,
+			typeEncoding: oType | oEnc,
 		}
 	}
 	return Encode("OK", true)
@@ -35,13 +36,23 @@ func set(key string, value any, ttl time.Duration, override bool) []byte {
 func get(key string) []byte {
 	if val, ok := memory[key]; ok {
 		if val.ttl.IsZero() || time.Now().Before(val.ttl) {
-			return Encode(val.value, true)
+			return Encode(val.value, false)
 		}
 		delete(memory, key)
 	}
 	return RESP_NIL
-
 }
+
+func getObj(key string) (Object, bool) {
+	if val, ok := memory[key]; ok {
+		if val.ttl.IsZero() || time.Now().Before(val.ttl) {
+			return val, true
+		}
+		delete(memory, key)
+	}
+	return Object{}, false
+}
+
 func ttl(key string) []byte {
 	if val, ok := memory[key]; ok {
 		if !val.ttl.IsZero() && time.Now().Before(val.ttl) {

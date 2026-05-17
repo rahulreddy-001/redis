@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -12,12 +13,12 @@ import (
 
 var RESP_NIL = []byte("$-1\r\n")
 
-func evalCommand(_ []string, c io.ReadWriter) error {
+func evalCommand(_ []string, c io.Writer) error {
 	_, err := c.Write(RESP_NIL)
 	return err
 }
 
-func evalPing(args []string, c io.ReadWriter) error {
+func evalPing(args []string, c io.Writer) error {
 	if len(args) > 1 {
 		return errors.New("ERR wrong number of arguments for 'ping' command")
 	}
@@ -30,7 +31,7 @@ func evalPing(args []string, c io.ReadWriter) error {
 	return err
 }
 
-func evalSET(args []string, c io.ReadWriter) error {
+func evalSET(args []string, c io.Writer) error {
 	if len(args) < 2 {
 		return errors.New("ERR wrong number of arguments for 'set' command")
 	}
@@ -69,7 +70,7 @@ func evalSET(args []string, c io.ReadWriter) error {
 	return nil
 }
 
-func evalGET(args []string, c io.ReadWriter) error {
+func evalGET(args []string, c io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("ERR wrong number of arguments for 'get' command")
 	}
@@ -77,7 +78,7 @@ func evalGET(args []string, c io.ReadWriter) error {
 	return nil
 }
 
-func evalTTL(args []string, c io.ReadWriter) error {
+func evalTTL(args []string, c io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("ERR wrong number of arguments for 'ttl' command")
 	}
@@ -85,7 +86,7 @@ func evalTTL(args []string, c io.ReadWriter) error {
 	return nil
 }
 
-func evalDEL(args []string, c io.ReadWriter) error {
+func evalDEL(args []string, c io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("ERR wrong number of arguments for 'del' command")
 	}
@@ -93,7 +94,7 @@ func evalDEL(args []string, c io.ReadWriter) error {
 	return nil
 }
 
-func evalExpire(args []string, c io.ReadWriter) error {
+func evalExpire(args []string, c io.Writer) error {
 	if len(args) < 2 {
 		return errors.New("ERR wrong number of arguments for 'expire' command")
 	}
@@ -129,10 +130,40 @@ func evalExpire(args []string, c io.ReadWriter) error {
 	}
 	c.Write(expire(args[0], time.Duration(ttl)*time.Second, nx, xx, gl, lt))
 	return nil
-
 }
 
-func EvalAndRespond(cmd Cmd, c io.ReadWriter) error {
+func evalINCR(args []string, c io.Writer) error {
+	if len(args) != 1 {
+		return errors.New("ERR wrong number of arguments for 'incr' command")
+	}
+
+	key := args[0]
+	obj, exists := getObj(key)
+	if !exists {
+		val := "0"
+		oType, oEnc := getTypeEnc(val)
+		obj = Object{
+			value:        val,
+			typeEncoding: oType | oEnc,
+		}
+	}
+	oType, oEnc := getTypeEnc(obj.value)
+	if err := assertType(oType, OBJ_TYPE_STRING); err != nil {
+		return err
+	}
+	if err := assertEnc(oEnc, OBJ_ENC_INT); err != nil {
+		return err
+	}
+
+	val, _ := strconv.Atoi(obj.value.(string))
+	obj.value = strconv.Itoa(val + 1)
+	setObj(key, obj)
+
+	c.Write(Encode(val+1, false))
+	return nil
+}
+
+func EvalAndRespond(cmd Cmd, c io.Writer) error {
 	switch cmd.Cmd {
 	case "COMMAND":
 		return evalCommand(cmd.Args, c)
@@ -148,6 +179,25 @@ func EvalAndRespond(cmd Cmd, c io.ReadWriter) error {
 		return evalDEL(cmd.Args, c)
 	case "EXPIRE":
 		return evalExpire(cmd.Args, c)
+	case "BGWRITEAOF":
+		return DumpAllAOF()
+	case "INCR":
+		return evalINCR(cmd.Args, c)
 	}
 	return errors.ErrUnsupported
+}
+
+func EvalAndRespondCmds(cmds Cmds, c io.ReadWriter) error {
+	var response []byte
+	buf := bytes.NewBuffer(response)
+
+	var errs error
+	for _, cmd := range cmds {
+		if err := EvalAndRespond(*cmd, buf); err != nil {
+			errors.Join(errs, err)
+		}
+	}
+
+	c.Write(buf.Bytes())
+	return errs
 }

@@ -15,28 +15,36 @@ func logPanic(message string, err error) {
 	}
 }
 
-func readCommand(c io.ReadWriter) (core.Cmd, error) {
+func readCommand(c io.ReadWriter) (core.Cmds, error) {
 	var buf []byte = make([]byte, 512)
 	n, err := c.Read(buf)
 	if err != nil {
-		return core.Cmd{}, err
+		return core.Cmds{}, err
 	}
-	tokens, err := core.DecoreArrayString(buf[:n])
+	commands, err := core.DecodeManyCmds(buf[:n])
+	cmds := make(core.Cmds, len(commands))
 	if err != nil {
-		return core.Cmd{}, err
+		return cmds, err
 	}
-	return core.Cmd{
-		Cmd:  strings.ToUpper(tokens[0]),
-		Args: tokens[1:],
-	}, nil
+	for i := 0; i < len(commands); i++ {
+		tokens, err := core.ToArrayString(commands[i])
+		if err != nil {
+			return cmds, err
+		}
+		cmds[i] = &core.Cmd{
+			Cmd:  strings.ToUpper(tokens[0]),
+			Args: tokens[1:],
+		}
+	}
+	return cmds, nil
 }
 
 func respondError(err error, c io.ReadWriter) {
 	c.Write([]byte(fmt.Sprintf("-%s\r\n", err)))
 }
 
-func respond(cmd core.Cmd, c io.ReadWriter) {
-	err := core.EvalAndRespond(cmd, c)
+func respond(cmds core.Cmds, c io.ReadWriter) {
+	err := core.EvalAndRespondCmds(cmds, c)
 	if err != nil {
 		respondError(err, c)
 	}
@@ -57,13 +65,13 @@ func RunTCPServer() {
 
 		go func(c net.Conn) {
 			for {
-				cmd, err := readCommand(c)
+				cmds, err := readCommand(c)
 				if err != nil {
 					c.Close()
 					log.Println("closed connection from ", c.RemoteAddr())
 					break
 				}
-				respond(cmd, c)
+				respond(cmds, c)
 			}
 		}(c)
 	}

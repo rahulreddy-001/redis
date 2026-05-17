@@ -1,16 +1,44 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
 )
 
-func DecoreArrayString(data []byte) ([]string, error) {
+func DecoreOneCmd(data []byte) ([]string, error) {
+	if len(data) == 0 {
+		return nil, errors.New("no data")
+	}
+
 	value, err := Decode(data)
 	if err != nil {
 		return []string{}, err
 	}
+	return ToArrayString(value)
+}
+
+func DecodeManyCmds(data []byte) ([]any, error) {
+	if len(data) == 0 {
+		return nil, errors.New("no data")
+	}
+
+	values := []any{}
+
+	var idx int = 0
+	for idx < len(data) {
+		value, delta, err := decodeOne(data[idx:])
+		if err != nil {
+			return values, err
+		}
+		idx += delta
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func ToArrayString(value any) ([]string, error) {
 	values := value.([]any)
 	tokens := make([]string, len(values))
 	for i, value := range values {
@@ -100,6 +128,13 @@ func Encode(value any, isSimple bool) []byte {
 		return []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(v), v))
 	case int64, int, int32:
 		return []byte(fmt.Sprintf(":%d\r\n", v))
+	case []string:
+		var b []byte
+		buf := bytes.NewBuffer(b)
+		for _, token := range value.([]string) {
+			buf.Write(Encode(token, false))
+		}
+		return []byte(fmt.Sprintf("*%d\r\n%s", len(v), buf.Bytes()))
 	}
 	return RESP_NIL
 }
